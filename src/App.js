@@ -11,6 +11,7 @@ const paypalOptions = {
   "client-id": process.env.REACT_APP_PAYPAL_CLIENT_ID,
   currency: "USD", // or "PHP"
   intent: "capture",
+  components: 'buttons',
 };
 
 // Admin constants/utilities (mirror of ReservationSystem)

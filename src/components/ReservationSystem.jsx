@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReservationForm from './ReservationForm';
 import ReservationList from './ReservationList';
 import { sendNotification } from '../utils/notification';
-import { PayPalButtons } from "@paypal/react-paypal-js";
 import DepositPanel from './DepositPanel';
 
 // Config: adjust as needed
@@ -14,36 +13,6 @@ const TIME_SLOTS = [
 // Pricing config
 const PRICE_PER_SEAT = 5;      // change as needed
 const DEPOSIT_PERCENT = 0.2;   // 20% deposit
-
-function CheckoutButton({ amount = "10.00", onSuccess }) {
-    return (    
-      <PayPalButtons
-        style={{ layout: "vertical", color: "gold", shape: "rect", label: "paypal" }}
-        createOrder={async (data, actions) => {
-          // Client-side order (demo). For production use your server to create the order.
-          return actions.order.create({
-            purchase_units: [
-              {
-                amount: { value: amount }, // string like "10.00"
-                description: "Restaurant reservation",
-              },
-            ],
-          });
-        }}
-        onApprove={async (data, actions) => {
-          const details = await actions.order.capture();
-          // details contains payer info and transaction id
-          console.log("PayPal capture details:", details);
-          onSuccess?.(details);
-          alert("Payment successful!");
-        }}
-        onError={(err) => {
-          console.error("PayPal error:", err);
-          alert("Payment failed. Check console for details.");
-        }}
-      />
-    );
-  }
   
 
 function todayISO() {
@@ -334,18 +303,6 @@ useEffect(() => {
     <div className="paybox-info">
       Total: ${pendingPayment.total.toFixed(2)} • Deposit (20%): <strong>${pendingPayment.deposit.toFixed(2)}</strong>
     </div>
-    <CheckoutButton
-      amount={pendingPayment.deposit.toFixed(2)}   // string is correct
-      onSuccess={(details) => {
-        setReservations(prev => prev.map(r =>
-          r.id === pendingPayment.id
-            ? { ...r, status: 'confirmed', depositPaid: true, depositAmount: pendingPayment.deposit, totalAmount: pendingPayment.total, paymentId: details?.id }
-            : r
-        ));
-        setPendingPayment(null);
-        try { notifyDepositPaid(activeRes, details, pendingPayment.deposit, pendingPayment.total); } catch {}
-      }}
-    />
     <DepositPanel
   open={!!pendingPayment}
   reservation={activeRes}

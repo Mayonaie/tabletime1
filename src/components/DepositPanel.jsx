@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { PayPalButtons } from '@paypal/react-paypal-js';
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4000';
+const API_BASE =
+  process.env.NODE_ENV === 'production'
+    ? '' // same-origin in production when served by Express
+    : (process.env.REACT_APP_API_BASE || 'http://localhost:4000');
 
 export default function DepositPanel({ open, reservation, deposit, total, onClose, onSuccess }) {
   const [showPay, setShowPay] = useState(false);
@@ -38,58 +41,77 @@ export default function DepositPanel({ open, reservation, deposit, total, onClos
             <PayPalButtons
               style={{ layout: 'vertical', color: 'gold', shape: 'rect', label: 'paypal' }}
               createOrder={async () => {
-                const res = await fetch(`${API_BASE}/api/paypal/create-order`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    amount: Number(deposit || 0).toFixed(2),
-                    description: `Deposit for reservation ${reservation?.id}`,
-                    currency: 'USD'
-                  }),
-                });
-                // src/components/DepositPanel.jsx (inside createOrder)
-                if (!res.ok) {
-                  const txt = await res.text();
-                  console.error('create-order failed:', res.status, txt);
-                  try {
-                    const parsed = JSON.parse(txt);
-                    alert(`Create order failed: ${parsed?.detail?.details?.[0]?.issue || parsed?.detail?.name || res.status}`);
-                  } catch {
-                    alert('Create order failed.');
+                try {
+                  const res = await fetch(`${API_BASE}/api/paypal/create-order`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      amount: Number(deposit || 0).toFixed(2),
+                      description: `Deposit for reservation ${reservation?.id}`,
+                      currency: 'USD'
+                    }),
+                  });
+                  if (!res.ok) {
+                    const txt = await res.text();
+                    console.error('create-order failed:', res.status, txt);
+                    try {
+                      const parsed = JSON.parse(txt);
+                      alert(`Create order failed: ${parsed?.detail?.details?.[0]?.issue || parsed?.detail?.name || res.status}`);
+                    } catch {
+                      alert(`Create order failed: HTTP ${res.status}`);
+                    }
+                    throw new Error('create-order failed');
                   }
-                  throw new Error('create-order failed');
+                  const data = await res.json();
+                  return data.id;
+                } catch (e) {
+                  console.error('create-order exception:', e);
+                  alert(`Create order error: ${e?.message || e}`);
+                  throw e;
                 }
-                const data = await res.json();
-                return data.id;
               }}
               onApprove={async (data, actions) => {
-                const res = await fetch(`${API_BASE}/api/paypal/capture-order`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ orderID: data.orderID }),
-                });
-                // src/components/DepositPanel.jsx (inside onApprove after capture fetch)
-                if (!res.ok) {
-                  const txt = await res.text();
-                  console.error('capture failed:', res.status, txt);
-                  try {
-                    const parsed = JSON.parse(txt);
-                    const issue = parsed?.detail?.details?.[0]?.issue || parsed?.name || parsed?.detail?.name;
-                    // Handle recoverable errors by restarting the checkout
-                    if (issue === 'INSTRUMENT_DECLINED' || issue === 'PAYER_ACTION_REQUIRED') {
-                      if (actions?.restart) {
-                        console.warn('Restarting PayPal checkout due to issue:', issue);
-                        return actions.restart();
+                try {
+                  const res = await fetch(`${API_BASE}/api/paypal/capture-order`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ orderID: data.orderID }),
+                  });
+                  if (!res.ok) {
+                    const txt = await res.text();
+                    console.error('capture failed:', res.status, txt);
+                    try {
+                      const parsed = JSON.parse(txt);
+                      const issue = parsed?.detail?.details?.[0]?.issue || parsed?.name || parsed?.detail?.name;
+                      if (issue === 'INSTRUMENT_DECLINED' || issue === 'PAYER_ACTION_REQUIRED') {
+                        if (actions?.restart) {
+                          console.warn('Restarting PayPal checkout due to issue:', issue);
+                          return actions.restart();
+                        }
                       }
+                      alert(`Capture failed: ${issue || res.status}`);
+                    } catch {
+                      alert(`Capture failed: HTTP ${res.status}`);
                     }
-                    alert(`Capture failed: ${issue || res.status}`);
-                  } catch {
-                    alert('Capture failed.');
+                    throw new Error('capture failed');
                   }
-                  throw new Error('capture failed');
+                  const details = await res.json();
+                  onSuccess?.(details);
+                  alert('Payment successful!');
+                } catch (e) {
+                  console.error('capture-order exception:', e);
+                  alert(`Capture error: ${e?.message || e}`);
+                  throw e;
                 }
-                const details = await res.json();
-                onSuccess?.(details);
+              }}
+              onError={(err) => {
+                console.error('PayPal SDK onError:', err);
+                try {
+                  const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
+                  alert(`PayPal error: ${msg}`);
+                } catch {
+                  alert('PayPal error occurred. Check console for details.');
+                }
               }}
             />
           )}

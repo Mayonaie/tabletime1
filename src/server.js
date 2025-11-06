@@ -4,11 +4,16 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 // Load environment variables from .env
-try { require('dotenv').config(); } catch {}
+try {
+  // Ensure we load the .env located at the project root (one level up from src/)
+  const envPath = path.join(__dirname, '..', '.env');
+  require('dotenv').config({ path: envPath });
+} catch {}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+const PORT = process.env.PORT || 4000;
 
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
 const PAYPAL_SECRET = process.env.PAYPAL_SECRET;
@@ -122,6 +127,42 @@ app.post('/api/paypal/capture-order', async (req, res) => {
   }
 });
 
+// Simple diagnostic endpoint to verify credentials and order creation
+app.get('/api/paypal/self-test', async (req, res) => {
+  if (!PAYPAL_CLIENT_ID || !PAYPAL_SECRET) {
+    return res.status(503).json({ error: 'paypal-config-missing', message: 'Set PAYPAL_CLIENT_ID and PAYPAL_SECRET in your .env to enable PayPal.' });
+  }
+  try {
+    const accessToken = await getAccessToken();
+    const currencyCode = (process.env.PAYPAL_CURRENCY || 'USD').toUpperCase();
+    const orderRes = await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        intent: 'CAPTURE',
+        purchase_units: [{
+          amount: { currency_code: currencyCode, value: '1.00' },
+          description: 'Self-test order',
+        }],
+      }),
+    });
+    const text = await orderRes.text();
+    let payload;
+    try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+    if (!orderRes.ok) {
+      console.error('Self-test create-order failed:', orderRes.status, JSON.stringify(payload, null, 2));
+      return res.status(orderRes.status).json({ error: 'create-order-failed', detail: payload });
+    }
+    return res.status(200).json(payload);
+  } catch (e) {
+    console.error('Self-test exception:', e);
+    return res.status(500).json({ error: 'self-test-exception', message: e?.message || String(e) });
+  }
+});
+
 // ---- Reviews API (simple JSON file persistence) ----
 const REVIEWS_FILE = path.join(__dirname, 'reviews.data.json');
 
@@ -175,4 +216,17 @@ app.post('/api/reviews', (req, res) => {
   res.status(201).json(item);
 });
 
-app.listen(4000, () => console.log('PayPal API server on http://localhost:4000'));
+// ---- Serve React build in production ----
+try {
+  const buildPath = path.join(__dirname, '..', 'build');
+  if (fs.existsSync(buildPath)) {
+    app.use(express.static(buildPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(buildPath, 'index.html'));
+    });
+  }
+} catch (e) {
+  console.warn('[server] Static build serving not enabled:', e?.message || e);
+}
+
+app.listen(PORT, () => console.log(`Server listening on http://localhost:${PORT}`));
